@@ -1,0 +1,234 @@
+# Download Combined Cycle Power Plant dataset from GitHub mirror
+import pandas as pd
+import urllib.request
+from tensorflow.keras import layers, regularizers
+import tensorflow.keras as keras
+import tensorflow.keras.layers as layers
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import mean_squared_error, r2_score
+from sklearn.metrics import mean_absolute_error
+from tensorflow.keras.losses import Huber
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+import numpy as np
+import tensorflow as tf
+import matplotlib.pyplot as plt
+import pandas as pd
+import pandas as pd
+
+from ucimlrepo import fetch_ucirepo 
+  
+combined_cycle_power_plant = fetch_ucirepo(id=294) 
+  
+x = combined_cycle_power_plant.data.features 
+y = combined_cycle_power_plant.data.targets 
+
+print(x.shape)
+print(y.shape)
+print(y.max())
+print(x.head())
+xtrain, xtest, ytrain, ytest = train_test_split(x, y, test_size=0.2, random_state=42)
+xtrain.head()
+
+
+xtrain, xtest, ytrain, ytest = train_test_split(x, y, test_size=0.1, random_state=42)
+
+scaler = StandardScaler()
+xtrain_scaled = scaler.fit_transform(xtrain)
+xtest_scaled = scaler.transform(xtest)
+
+yscaler = StandardScaler()
+ytrain_scaled = yscaler.fit_transform(ytrain)
+ytest_scaled = yscaler.transform(ytest)
+import random
+random.seed(42)
+np.random.seed(42)
+tf.random.set_seed(42)
+
+BatchSize = 128
+Nepochs = 200
+ValidationSplit = 0.1
+
+model = tf.keras.models.Sequential([
+    layers.Input(shape=(xtrain_scaled.shape[1],)),
+    layers.Dense(32, activation='relu', kernel_regularizer=regularizers.l2(3e-4)),
+    layers.Dropout(0.02),
+    layers.Dense(16, activation='relu', kernel_regularizer=regularizers.l2(3e-4)),
+    layers.Dense(1, activation='linear'),
+])
+
+rate_scheduler = keras.callbacks.ReduceLROnPlateau(
+    monitor='val_loss', factor=0.5, patience=4, min_lr=1e-5
+)
+
+print("--------------------------------------------------------------------------------------------------------------")
+print("Training a multilayer perceptron on Combined Cycle Power Plant dataset")
+print("--------------------------------------------------------------------------------------------------------------\n")
+print("Input data: Combined Cycle Power Plant (UCI id=294)")
+print("2 hidden layer MLP with configuration 4:32:16:1")
+print("Nepochs (max) = ", Nepochs)
+print("N(train)      = ", len(xtrain))
+print("N(test)       = ", len(xtest))
+
+early_stop = tf.keras.callbacks.EarlyStopping(
+    monitor='val_loss',
+    min_delta=2e-4,
+    patience=8,
+    restore_best_weights=True
+)
+
+model.compile(
+    optimizer=tf.keras.optimizers.AdamW(learning_rate=4e-4, weight_decay=1.2e-3),
+    loss=tf.keras.losses.Huber(1.2),
+    metrics=[tf.keras.metrics.MeanAbsoluteError(name='mae')]
+)
+history = model.fit(
+    xtrain_scaled, ytrain_scaled,
+    batch_size=BatchSize,
+    epochs=Nepochs,
+    validation_split=ValidationSplit,
+    callbacks=[rate_scheduler],
+    verbose=0
+)
+model.summary()
+predicted = yscaler.inverse_transform(model.predict(xtest_scaled, verbose=0))
+keys = history.history.keys()
+print("Training history contains the following keys:")
+for key in keys:
+    print("  ", key)
+
+
+plt.plot(history.history['mae'], label='train')
+plt.plot(history.history['val_mae'], label='validate')
+plt.title('Model MAE')
+plt.ylabel('MAE')
+plt.xlabel('Epoch')
+plt.legend(loc='upper right')
+plt.show()
+plt.clf()
+
+plt.plot(history.history['loss'], label='train')
+plt.plot(history.history['val_loss'], label='validate')
+plt.title('Model Loss')
+plt.ylabel('Loss')
+plt.xlabel('Epoch')
+plt.legend(loc='upper right')
+plt.show()
+
+print("\nPerformance summary on test data:")
+loss, mae = model.evaluate(xtest_scaled, ytest_scaled, verbose=0)
+print("  loss = {:5.3f}".format(loss))
+print("  mean absolute error = {:5.3f}".format(mae))
+truevalues= yscaler.inverse_transform(ytest_scaled)
+mae = mean_absolute_error(truevalues, predicted)
+rmse = np.sqrt(mean_squared_error(truevalues, predicted))
+r2 = r2_score(truevalues, predicted)
+plt.figure(figsize=(12, 6))
+plt.scatter(truevalues, predicted, alpha=0.5, edgecolors='k', linewidth=0.5)
+plt.plot([truevalues.min(), truevalues.max()], [truevalues.min(), truevalues.max()], 'r-', lw=2, label='Perfect prediction')
+plt.xlabel('True Values (MW)')
+plt.ylabel('Predicted Values For Energy Output (MW)')
+plt.title('True vs Predicted Energy Output Values')
+plt.legend()
+plt.text(0.05, 0.90, f'R² = {r2:.2f}\nMAE = {mae:.2f}\nRMSE = {rmse:.2f}',
+transform=plt.gca().transAxes, fontsize=10, verticalalignment='top',
+bbox=dict(boxstyle='round', facecolor='green', alpha=0.2))
+plt.tight_layout()
+plt.show()
+
+# Grouped bar chart: True vs Predicted counts per energy bin with accuracy %
+ranges = [-np.inf, 440, 460, 480, np.inf]
+energylabels = ['Low (<440)', 'Medium (440-460)', 'High (460-480)', 'Extremely High (>480)']
+
+truebins = pd.cut(truevalues.flatten(), bins=ranges, labels=energylabels)
+predictedbins = pd.cut(predicted.flatten(), bins=ranges, labels=energylabels)
+
+true_output = truebins.value_counts().reindex(energylabels).fillna(0)
+predicted_output = predictedbins.value_counts().reindex(energylabels).fillna(0)
+
+true = (truebins == predictedbins)
+correct_per_bin = pd.Series(true).groupby(truebins, observed=False).sum().reindex(energylabels).fillna(0)
+accuracy_pct = (correct_per_bin / true_output * 100).fillna(0)
+
+bar_x = np.arange(len(energylabels))
+width = 0.35
+
+fig, ax = plt.subplots(figsize=(14, 8))
+bar1 = ax.bar(bar_x - width/2, true_output, width, label='True', color='steelblue', edgecolor='k')
+bar2 = ax.bar(bar_x + width/2, predicted_output, width, label='Predicted', color='coral', edgecolor='k')
+
+for output, pct in enumerate(accuracy_pct):
+    ax.text(
+        bar_x[output],
+        max(true_output.iloc[output], predicted_output.iloc[output]) + 5,
+        f'{pct:.1f}% accurate',
+        ha='center',
+        fontsize=10,
+        fontweight='bold'
+    )
+
+ax.set_xlabel('Energy Output Range (MW)', fontsize=12)
+ax.set_ylabel('Count', fontsize=12)
+ax.set_title('True vs Predicted Energy Output (with Accuracy %)', fontsize=14)
+ax.set_xticks(bar_x)
+ax.set_xticklabels(energylabels)
+ax.legend()
+
+ax.text(
+    0.02, 0.95, f'Overall R² = {r2:.2f}\nMAE = {mae:.2f}\nRMSE = {rmse:.2f}',
+    transform=ax.transAxes, fontsize=10, verticalalignment='top',
+    bbox=dict(boxstyle='round', facecolor='green', alpha=0.2)
+)
+
+plt.tight_layout()
+plt.show()
+
+# Plot 2: Residual differences (required by brief)
+residuals = truevalues - predicted
+plt.figure(figsize=(8, 6))
+plt.scatter(predicted, residuals, alpha=0.5, edgecolors='k', linewidth=0.5)
+plt.axhline(y=0, color='r', linestyle='-')
+plt.xlabel('Predicted Energy Output (MW)')
+plt.ylabel('Residual (True - Predicted) (MW)')
+plt.title('Residual Plot')
+plt.tight_layout()
+plt.show()
+
+# Plot 3: A "different" performance plot — error distribution
+plt.figure(figsize=(8, 6))
+plt.hist(residuals, bins=50, edgecolor='black', alpha=0.7)
+plt.axvline(x=0, color='r', linestyle='-')
+plt.xlabel('Residual (True - Predicted) (MW)')
+plt.ylabel('Frequency')
+plt.title('Distribution of Prediction Errors')
+plt.tight_layout()
+plt.show()
+from cProfile import label
+
+from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay, classification_report
+
+# Bin continuous energy values into categories for confusion matrix
+ranges = [-np.inf, 440, 460, 480, np.inf]
+energylabels = ['Low (<440)', 'Medium (440-460)', 'High (460-480)', 'Extremely High (>480)']
+
+true_energy_output_values = pd.cut(truevalues.flatten(), bins=ranges, labels=energylabels)
+predicted_energy_output_values = pd.cut(predicted.flatten(), bins=ranges, labels=energylabels)
+
+cm = confusion_matrix(true_energy_output_values, predicted_energy_output_values, labels=energylabels)
+fig, ax = plt.subplots(figsize=(16, 12), dpi=200)
+disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=energylabels)
+disp.plot(ax=ax, cmap='Blues', colorbar=True, text_kw={'fontsize': 14, 'fontweight': 'bold'})
+plt.title('Confusion Matrix for True vs Predicted Energy Outputs', fontsize=24)
+plt.xlabel('Predicted Energy Range (MW)', fontsize = 16)
+plt.ylabel('True Energy Range (MW)', fontsize = 16)
+ax.xaxis.set_tick_params(labelsize=14)
+ax.yaxis.set_tick_params(labelsize=14)
+# for axis in ax.get_xticklabels():
+#     axis.set_fontweight('bold')
+# for axis in ax.get_yticklabels():
+#     axis.set_fontweight('bold')
+plt.tight_layout()
+plt.show()
+
+# Classification report for the binned predictions
+print(classification_report(true_energy_output_values, predicted_energy_output_values, labels=energylabels, target_names=energylabels))
